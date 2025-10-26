@@ -2,20 +2,18 @@
 package cmd
 
 import (
-	"bufio" // <-- Для чтения ввода пользователя
+	"bufio"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
 
-	"cli-for-sourcecraft/internal/api" // <-- Нужен только для api.Repo при запросе upstream URL
-	"cli-for-sourcecraft/internal/git" // Импортируем наш git хелпер
+	"cli-for-sourcecraft/internal/api"
+	"cli-for-sourcecraft/internal/git"
 
 	"github.com/spf13/cobra"
-	// "github.com/spf13/viper" // Не нужен здесь
 )
 
-// Флаги для команды sync
 var (
 	syncPushFlag  bool
 	syncHTTPSFlag bool
@@ -34,20 +32,17 @@ This command must be run from within the root directory of your cloned fork.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 
-		// 1. Определяем текущий репозиторий (наш форк) - опционально, для default branch
 		fmt.Println("Checking current repository...")
 		currentOrg, currentRepo, err := git.GetCurrentRepoOwnerAndNameFromRemote("origin")
 		if err != nil {
-			// Не фатально, можем не знать org/repo форка
 			fmt.Printf("Warning: could not determine current repository from 'origin' remote: %v. Will assume default branch is 'main'.\n", err)
-			currentOrg = "" // Сбрасываем, чтобы не использовать дальше
+			currentOrg = ""
 			currentRepo = ""
 		} else {
 			fmt.Printf("Detected current repository: %s/%s\n", currentOrg, currentRepo)
 		}
 
-		// 2. Получаем дефолтную ветку текущего репо (если смогли определить его)
-		defaultBranch := "main" // Запасной вариант
+		defaultBranch := "main"
 		if currentOrg != "" && currentRepo != "" {
 			fmt.Println("Fetching repository details to determine default branch...")
 			repoInfo, err := apiClient.GetRepository(currentOrg, currentRepo)
@@ -59,33 +54,26 @@ This command must be run from within the root directory of your cloned fork.`,
 		}
 		fmt.Printf("Target local branch for merge: '%s'\n", defaultBranch)
 
-		// 3. Проверяем/Настраиваем 'upstream' remote
-		desiredUpstreamURL, err := ensureUpstreamRemote(syncHTTPSFlag) // Выносим логику в хелпер
+		desiredUpstreamURL, err := ensureUpstreamRemote(syncHTTPSFlag)
 		if err != nil {
 			return err
 		}
 		fmt.Printf("Using upstream URL: %s\n", desiredUpstreamURL)
 
-		// 4. Fetch changes from upstream
 		fmt.Println("Fetching changes from upstream...")
 		if err := runGitCommand("fetch", "upstream"); err != nil {
 			return fmt.Errorf("failed to fetch from upstream: %w", err)
 		}
 
-		// 5. Checkout local default branch
 		fmt.Printf("Switching to local branch '%s'...\n", defaultBranch)
 		if err := runGitCommand("checkout", defaultBranch); err != nil {
 			return fmt.Errorf("failed to checkout branch '%s': %w. Make sure you don't have uncommitted changes", defaultBranch, err)
 		}
 
-		// 6. Merge upstream changes
-		// Предполагаем, что у upstream дефолтная ветка называется так же.
 		upstreamDefaultBranchRef := fmt.Sprintf("upstream/%s", defaultBranch)
 		fmt.Printf("Merging changes from '%s' into '%s'...\n", upstreamDefaultBranchRef, defaultBranch)
-		err = runGitCommand("merge", "--no-ff", upstreamDefaultBranchRef) // Используем --no-ff для явного merge коммита
-		// Проверяем ошибки мержа (включая конфликты)
+		err = runGitCommand("merge", "--no-ff", upstreamDefaultBranchRef)
 		if err != nil {
-			// Проверяем статус на наличие конфликтов
 			conflictOutput, statusErr := exec.Command("git", "status", "--porcelain").Output()
 			isConflict := statusErr == nil && strings.Contains(string(conflictOutput), "UU ")
 
@@ -98,23 +86,20 @@ This command must be run from within the root directory of your cloned fork.`,
 				fmt.Println("  3. Run 'git commit' to finalize the merge.")
 				fmt.Println("After resolving, you can optionally push to your origin.")
 				fmt.Println("---")
-				// Возвращаем nil, т.к. команда инициировала процесс, но требует ручного вмешательства
 				return nil
 			} else {
-				// Другая ошибка мержа
 				return fmt.Errorf("merge from '%s' failed: %w", upstreamDefaultBranchRef, err)
 			}
 		}
 		fmt.Println("Merge successful or already up-to-date.")
 
-		// 7. Push changes (optional)
 		if syncPushFlag {
 			fmt.Printf("Pushing updated branch '%s' to origin...\n", defaultBranch)
 			if err := runGitCommand("push", "origin", defaultBranch); err != nil {
 				return fmt.Errorf("failed to push to origin: %w", err)
 			}
 			fmt.Println("Push successful.")
-		} else if err == nil { // Предлагаем push только если мерж прошел чисто
+		} else if err == nil {
 			fmt.Printf("\nSync complete locally. Run 'git push origin %s' to update your remote fork on SourceCraft.\n", defaultBranch)
 		}
 
@@ -122,8 +107,6 @@ This command must be run from within the root directory of your cloned fork.`,
 	},
 }
 
-// ensureUpstreamRemote проверяет remote 'upstream', при необходимости запрашивает путь,
-// получает нужный URL (SSH/HTTPS) и настраивает/обновляет remote.
 func ensureUpstreamRemote(useHTTPS bool) (string, error) {
 	existingUpstreamURL, err := git.GetRemoteURL("upstream")
 	upstreamNotFound := (err != nil && strings.Contains(err.Error(), "not found"))
@@ -139,66 +122,56 @@ func ensureUpstreamRemote(useHTTPS bool) (string, error) {
 
 	if !upstreamNotFound {
 		fmt.Printf("Existing 'upstream' remote found: %s\n", existingUpstreamURL)
-		// Проверяем, совпадает ли протокол
 		isExistingSSH := strings.HasPrefix(existingUpstreamURL, "git@") || strings.HasPrefix(existingUpstreamURL, "ssh://")
 		needsUpdate := (useHTTPS && isExistingSSH) || (!useHTTPS && !isExistingSSH)
 
 		if needsUpdate {
 			fmt.Printf("Protocol mismatch detected (Existing is %s, requested %s). Updating URL...\n", map[bool]string{true: "SSH", false: "HTTPS"}[isExistingSSH], desiredProto)
-			// Парсим owner/repo из существующего URL, чтобы запросить новый
 			upstreamOrgSlug, upstreamRepoSlug, parseErr := git.ParseOwnerAndRepoFromURL(existingUpstreamURL)
 			if parseErr != nil {
-				// Если не смогли распарсить, просим пользователя ввести заново
 				fmt.Printf("Warning: Could not parse existing upstream URL to update protocol: %v\n", parseErr)
-				upstreamOrgSlug, upstreamRepoSlug, parseErr = promptForUpstreamPath(nil) // Передаем nil, т.к. repoInfo опционален
+				upstreamOrgSlug, upstreamRepoSlug, parseErr = promptForUpstreamPath(nil)
 				if parseErr != nil {
 					return "", parseErr
 				}
 			}
-			// Запрашиваем URL нужного протокола
 			newUpstreamURL, fetchErr := fetchUpstreamURL(upstreamOrgSlug, upstreamRepoSlug, useHTTPS)
 			if fetchErr != nil {
 				return "", fetchErr
 			}
 
-			// Обновляем remote
 			fmt.Printf("Updating 'upstream' remote URL to %s...\n", newUpstreamURL)
 			if err := runGitCommand("remote", "set-url", "upstream", newUpstreamURL); err != nil {
 				return "", fmt.Errorf("failed to update 'upstream' remote URL: %w", err)
 			}
-			return newUpstreamURL, nil // Возвращаем обновленный URL
+			return newUpstreamURL, nil
 		} else {
 			fmt.Println("Existing upstream URL protocol matches.")
-			return existingUpstreamURL, nil // Используем существующий URL
+			return existingUpstreamURL, nil
 		}
 
 	} else {
-		// Upstream не найден, нужно добавить
 		fmt.Println("'upstream' remote not found.")
-		// Запрашиваем путь у пользователя
-		upstreamOrgSlug, upstreamRepoSlug, promptErr := promptForUpstreamPath(nil) // Передаем nil, т.к. repoInfo опционален здесь
+		upstreamOrgSlug, upstreamRepoSlug, promptErr := promptForUpstreamPath(nil)
 		if promptErr != nil {
 			return "", promptErr
 		}
 
-		// Запрашиваем URL нужного протокола
 		newUpstreamURL, fetchErr := fetchUpstreamURL(upstreamOrgSlug, upstreamRepoSlug, useHTTPS)
 		if fetchErr != nil {
 			return "", fetchErr
 		}
 
-		// Добавляем remote
 		fmt.Printf("Adding 'upstream' remote pointing to %s...\n", newUpstreamURL)
 		if err := runGitCommand("remote", "add", "upstream", newUpstreamURL); err != nil {
 			return "", fmt.Errorf("failed to add 'upstream' remote: %w", err)
 		}
-		return newUpstreamURL, nil // Возвращаем добавленный URL
+		return newUpstreamURL, nil
 	}
 }
 
-// Helper function to prompt user for upstream path (repoInfo can be nil)
 func promptForUpstreamPath(repoInfo *api.Repo) (orgSlug, repoSlug string, err error) {
-	parentSlugHint := "original-repo" // Generic hint
+	parentSlugHint := "original-repo"
 	if repoInfo != nil && repoInfo.Parent != nil && repoInfo.Parent.Slug != nil && *repoInfo.Parent.Slug != "" {
 		parentSlugHint = *repoInfo.Parent.Slug
 	}
@@ -215,10 +188,9 @@ func promptForUpstreamPath(repoInfo *api.Repo) (orgSlug, repoSlug string, err er
 	return parts[0], parts[1], nil
 }
 
-// Helper function to fetch the correct upstream URL from API
 func fetchUpstreamURL(orgSlug, repoSlug string, useHTTPS bool) (string, error) {
 	fmt.Printf("Fetching details for upstream repository %s/%s to get clone URL...\n", orgSlug, repoSlug)
-	upstreamRepoInfo, err := apiClient.GetRepository(orgSlug, repoSlug) // Используем GetRepository
+	upstreamRepoInfo, err := apiClient.GetRepository(orgSlug, repoSlug)
 	if err != nil {
 		return "", fmt.Errorf("failed to get upstream repository info (%s/%s) for clone URL: %w", orgSlug, repoSlug, err)
 	}
@@ -231,15 +203,15 @@ func fetchUpstreamURL(orgSlug, repoSlug string, useHTTPS bool) (string, error) {
 		if upstreamRepoInfo.CloneURL.HTTPS != nil && *upstreamRepoInfo.CloneURL.HTTPS != "" {
 			url = *upstreamRepoInfo.CloneURL.HTTPS
 			fmt.Println("Using HTTPS URL for upstream.")
-		} else if upstreamRepoInfo.CloneURL.SSH != nil && *upstreamRepoInfo.CloneURL.SSH != "" { // Fallback
+		} else if upstreamRepoInfo.CloneURL.SSH != nil && *upstreamRepoInfo.CloneURL.SSH != "" {
 			url = *upstreamRepoInfo.CloneURL.SSH
 			fmt.Println("HTTPS URL not found for upstream, falling back to SSH.")
 		}
-	} else { // Use SSH by default
+	} else {
 		if upstreamRepoInfo.CloneURL.SSH != nil && *upstreamRepoInfo.CloneURL.SSH != "" {
 			url = *upstreamRepoInfo.CloneURL.SSH
 			fmt.Println("Using SSH URL for upstream.")
-		} else if upstreamRepoInfo.CloneURL.HTTPS != nil && *upstreamRepoInfo.CloneURL.HTTPS != "" { // Fallback
+		} else if upstreamRepoInfo.CloneURL.HTTPS != nil && *upstreamRepoInfo.CloneURL.HTTPS != "" {
 			url = *upstreamRepoInfo.CloneURL.HTTPS
 			fmt.Println("SSH URL not found for upstream, falling back to HTTPS.")
 		}
@@ -251,15 +223,12 @@ func fetchUpstreamURL(orgSlug, repoSlug string, useHTTPS bool) (string, error) {
 	return url, nil
 }
 
-// runGitCommand helper
 func runGitCommand(args ...string) error {
 	cmd := exec.Command("git", args...)
-	// Перенаправляем stdout/stderr в os.Stdout/os.Stderr, чтобы пользователь видел вывод git
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	fmt.Printf("Running: git %s\n", strings.Join(args, " ")) // Логируем команду перед запуском
+	fmt.Printf("Running: git %s\n", strings.Join(args, " "))
 	err := cmd.Run()
-	// Не оборачиваем ошибку, чтобы сохранить ExitError
 	return err
 }
 
@@ -269,7 +238,6 @@ func init() {
 	repoSyncCmd.Flags().BoolVar(&syncHTTPSFlag, "https", false, "Use HTTPS URL for the upstream remote instead of SSH (used when adding or updating upstream)")
 }
 
-// derefString (нужен)
 func derefString(s *string) string {
 	if s != nil {
 		return *s
@@ -277,7 +245,6 @@ func derefString(s *string) string {
 	return ""
 }
 
-// derefBool (нужен)
 func derefBool(b *bool) bool {
 	if b != nil {
 		return *b

@@ -7,7 +7,7 @@ import "github.com/spf13/cobra"
 var repoCmd = &cobra.Command{
 	Use:     "repo",
 	Short:   "Repos ",
-	Aliases: []string{"repository"}, // Алиас для удобства
+	Aliases: []string{"repository"},
 }
 
 func init() {
