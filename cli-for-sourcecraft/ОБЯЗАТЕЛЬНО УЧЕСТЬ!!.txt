@@ -1,0 +1,8 @@
+./src.exe repo clone test --https (ТОЛЬКО ПО HTTPS!!)
+
+
+TEST ФОРКА (showcases/developer-roadmap - как пример)
+.\src.exe repo fork showcases/developer-roadmap
+
+FORK SYNC (ЕСЛИ В ДИРЕКТОРИИ БЕЗ SRC!!!)
+..\src.exe --config ..\config.yaml repo sync
